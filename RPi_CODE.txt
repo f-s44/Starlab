@@ -1,0 +1,21 @@
+
+
+import can
+
+bus = can.interface.Bus(channel='can0', bustype='socketcan')
+
+print("Listening...")
+
+while True:
+    msg = bus.recv()
+
+    if msg.arbitration_id == 0x100:
+        voltage_raw = (msg.data[0] << 8) | msg.data[1]
+        current_raw = (msg.data[2] << 8) | msg.data[3]
+
+        voltage = voltage_raw * 0.001
+        current = current_raw * 0.001
+
+        print("Voltage:", voltage, "V")
+        print("Current:", current, "A")
+        print("------")
