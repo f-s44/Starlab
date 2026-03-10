@@ -1,110 +1,109 @@
-from machine import Pin, SPI
+from machine import Pin, mem32
 import time
 
 # ---------------- PIN DEFINITIONS ----------------
-SPI_PORT = 0       # Corresponds to spi1
-SPI_SCK = 18       # GP10 is hardware SPI1 SCK
-SPI_MOSI = 19      # GP11 is hardware SPI1 TX (MOSI)
-SPI_MISO = 16      # GP12 is hardware SPI1 RX (MISO)
+SPI_SCK = 18
+SPI_MOSI = 19
+SPI_MISO = 16
 SPI_CS = 17
-SPI_BAUDRATE = 1_000_000  # 1 MHz
 
-# ---------------- ACS REGISTERS ----------------
-# 0x20: Volatile IRMS/VRMS register (read-only measurements)
 REG_POWER_DATA = 0x20
 
 txBuffer = bytearray(8)
 
-# ---------------- SPI SETUP ----------------
-spi = SPI(SPI_PORT,
-          baudrate=SPI_BAUDRATE,
-          polarity=1,
-          phase=1,  
-          sck=Pin(SPI_SCK),
-          mosi=Pin(SPI_MOSI),
-          miso=Pin(SPI_MISO))
+# ---------------- SPI0 REGISTER MAP ----------------
+SPI0_BASE = 0x4003C000
 
+SSPCR0  = SPI0_BASE + 0x000
+SSPCR1  = SPI0_BASE + 0x004
+SSPDR   = SPI0_BASE + 0x008
+SSPSR   = SPI0_BASE + 0x00C
+SSPCPSR = SPI0_BASE + 0x010
+
+# Status flags
+SPI_SR_TNF = 1 << 1
+SPI_SR_RNE = 1 << 2
+SPI_SR_BSY = 1 << 4
+
+# ---------------- PIN SETUP ----------------
 cs = Pin(SPI_CS, Pin.OUT)
-cs.value(1)  # CS high initially
+cs.value(1)
 
-# ---------------- SPI READ/WRITE ----------------
+Pin(SPI_SCK, Pin.ALT)
+Pin(SPI_MOSI, Pin.ALT)
+Pin(SPI_MISO, Pin.ALT)
+
+# ---------------- SPI INIT ----------------
+mem32[SSPCR1] = 0        # disable SPI
+
+mem32[SSPCPSR] = 6       # clock prescaler
+
+mem32[SSPCR0] = (
+        (7 << 0) |       # 8-bit data
+        (1 << 6) |       # CPOL = 1
+        (1 << 7)         # CPHA = 1
+)
+
+mem32[SSPCR1] = 2        # enable SPI
+
+# ---------------- LOW LEVEL TRANSFER ----------------
+def spi_transfer(tx):
+
+    rx = bytearray(len(tx))
+
+    for i in range(len(tx)):
+
+        while not (mem32[SSPSR] & SPI_SR_TNF):
+            pass
+
+        mem32[SSPDR] = tx[i]
+
+        while not (mem32[SSPSR] & SPI_SR_RNE):
+            pass
+
+        rx[i] = mem32[SSPDR] & 0xFF
+
+    return rx
+
+# ---------------- SPI READ ----------------
 def read_register(reg):
-   
-    addr = (reg & 0x7F) << 1       # bits 7:1 = address
-    read_cmd = addr | 0x01         # bit 0 = 1 => Read
+
+    addr = (reg & 0x7F) << 1
+    read_cmd = addr | 1
 
     tx = bytearray(5)
-    rx = bytearray(5)
     tx[0] = read_cmd
 
-    # First frame: prime the device, ignore returned data
     cs.value(0)
-    spi.write_readinto(tx, rx)
+    spi_transfer(tx)
     cs.value(1)
 
     time.sleep_us(5)
 
-    # Second frame: response to previous command
     cs.value(0)
-    spi.write_readinto(tx, rx)
+    rx = spi_transfer(tx)
     cs.value(1)
 
-    # rx[1:5] contain the 32‑bit register value MSB..LSB
     val = (rx[1] << 24) | (rx[2] << 16) | (rx[3] << 8) | rx[4]
+
     return val
 
-
-def write_register(reg, value):
-   
-    addr = (reg & 0x7F) << 1       # bits 7:1 = address
-    write_cmd = addr | 0x00        # bit 0 = 0 => Write
-
-    tx = bytearray(5)
-    rx = bytearray(5)
-    tx[0] = write_cmd
-    tx[1] = (value >> 24) & 0xFF
-    tx[2] = (value >> 16) & 0xFF
-    tx[3] = (value >> 8) & 0xFF
-    tx[4] = value & 0xFF
-
-    cs.value(0)
-    spi.write_readinto(tx, rx)
-    cs.value(1)
-
-# ---------------- PACKET BUILD ----------------
-def build_packet(voltage, current):
-    v_fixed = int(voltage * 100)
-    i_fixed = int(current * 100)
-
-    txBuffer[0] = 0xAA
-    txBuffer[1] = (v_fixed >> 8) & 0xFF
-    txBuffer[2] = v_fixed & 0xFF
-    txBuffer[3] = (i_fixed >> 8) & 0xFF
-    txBuffer[4] = i_fixed & 0xFF
-    txBuffer[5] = 0x00
-    txBuffer[6] = (txBuffer[1] + txBuffer[2] + txBuffer[3] + txBuffer[4]) & 0xFF
-    txBuffer[7] = 0x55
-
 # ---------------- MAIN LOOP ----------------
-print("Pico 2 Power Monitor Ready")
+print("Pico 2 Direct-SPI Power Monitor Ready")
 
 while True:
+
     packed_data = read_register(REG_POWER_DATA)
 
-    vrms_raw = packed_data & 0xFFFF           # VRMS: unsigned Q0.16
-    irms_raw = (packed_data >> 16) & 0xFFFF   # IRMS: signed Q0.16
+    vrms_raw = packed_data & 0xFFFF
+    irms_raw = (packed_data >> 16) & 0xFFFF
 
-    # Sign‑extend IRMS to 32 bits
     if irms_raw & 0x8000:
         irms_raw -= 0x10000
 
-    voltage = vrms_raw  * 0.84 * 1.19
-    current = irms_raw  * 15.0 * 1.19
+    voltage = vrms_raw * 0.84 * 1.19
+    current = irms_raw * 15.0 * 1.19
 
-    build_packet(voltage, current)
-
-    #print("PACKED:", hex(packed_data))
-    print("RAW:", vrms_raw, irms_raw)
-    #print("Voltage: {:.2f} V | Current: {:.2f} A".format(voltage, current))
-
+    #print("RAW:", vrms_raw, irms_raw)
+    print("Voltage: {:.2f} V, Current: {:.2f} A".format(voltage, current))
     time.sleep_ms(200)
