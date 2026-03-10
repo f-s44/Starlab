@@ -10,6 +10,7 @@ SPI_CS = 17
 SPI_BAUDRATE = 1_000_000  # 1 MHz
 
 # ---------------- ACS REGISTERS ----------------
+# 0x20: Volatile IRMS/VRMS register (read-only measurements)
 REG_POWER_DATA = 0x20
 
 txBuffer = bytearray(8)
@@ -17,8 +18,8 @@ txBuffer = bytearray(8)
 # ---------------- SPI SETUP ----------------
 spi = SPI(SPI_PORT,
           baudrate=SPI_BAUDRATE,
-          polarity=0,
-          phase=0,
+          polarity=1,
+          phase=1,  
           sck=Pin(SPI_SCK),
           mosi=Pin(SPI_MOSI),
           miso=Pin(SPI_MISO))
@@ -26,22 +27,49 @@ spi = SPI(SPI_PORT,
 cs = Pin(SPI_CS, Pin.OUT)
 cs.value(1)  # CS high initially
 
-# ---------------- SPI READ ----------------
+# ---------------- SPI READ/WRITE ----------------
 def read_register(reg):
-    cmd = bytearray(4)
-    cmd[0] = reg
-    cmd[1] = 0
-    cmd[2] = 0
-    cmd[3] = 0
+   
+    addr = (reg & 0x7F) << 1       # bits 7:1 = address
+    read_cmd = addr | 0x01         # bit 0 = 1 => Read
 
-    response = bytearray(4)
+    tx = bytearray(5)
+    rx = bytearray(5)
+    tx[0] = read_cmd
+
+    # First frame: prime the device, ignore returned data
     cs.value(0)
-    spi.write_readinto(cmd, response)
+    spi.write_readinto(tx, rx)
     cs.value(1)
 
-    # Convert 4 bytes into a 32-bit integer
-    val = (response[0] << 24) | (response[1] << 16) | (response[2] << 8) | response[3]
+    time.sleep_us(5)
+
+    # Second frame: response to previous command
+    cs.value(0)
+    spi.write_readinto(tx, rx)
+    cs.value(1)
+
+    # rx[1:5] contain the 32‑bit register value MSB..LSB
+    val = (rx[1] << 24) | (rx[2] << 16) | (rx[3] << 8) | rx[4]
     return val
+
+
+def write_register(reg, value):
+   
+    addr = (reg & 0x7F) << 1       # bits 7:1 = address
+    write_cmd = addr | 0x00        # bit 0 = 0 => Write
+
+    tx = bytearray(5)
+    rx = bytearray(5)
+    tx[0] = write_cmd
+    tx[1] = (value >> 24) & 0xFF
+    tx[2] = (value >> 16) & 0xFF
+    tx[3] = (value >> 8) & 0xFF
+    tx[4] = value & 0xFF
+
+    cs.value(0)
+    spi.write_readinto(tx, rx)
+    cs.value(1)
 
 # ---------------- PACKET BUILD ----------------
 def build_packet(voltage, current):
@@ -63,14 +91,20 @@ print("Pico 2 Power Monitor Ready")
 while True:
     packed_data = read_register(REG_POWER_DATA)
 
-    vrms_raw = packed_data & 0xFFFF
-    irms_raw = (packed_data >> 16) & 0xFFFF
+    vrms_raw = packed_data & 0xFFFF           # VRMS: unsigned Q0.16
+    irms_raw = (packed_data >> 16) & 0xFFFF   # IRMS: signed Q0.16
 
-    voltage = (vrms_raw / 65536.0) * 0.84 * 1.19
-    current = (irms_raw / 65536.0) * 15.0 * 1.19
+    # Sign‑extend IRMS to 32 bits
+    if irms_raw & 0x8000:
+        irms_raw -= 0x10000
+
+    voltage = vrms_raw  * 0.84 * 1.19
+    current = irms_raw  * 15.0 * 1.19
 
     build_packet(voltage, current)
 
-    print("Voltage: {:.2f} V | Current: {:.2f} A".format(voltage, current))
+    #print("PACKED:", hex(packed_data))
+    print("RAW:", vrms_raw, irms_raw)
+    #print("Voltage: {:.2f} V | Current: {:.2f} A".format(voltage, current))
 
     time.sleep_ms(200)
