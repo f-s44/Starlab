@@ -1,0 +1,102 @@
+from machine import Pin, SPI
+import time
+# ---------------- PIN DEFINITIONS ----------------
+SPI_PORT = 0       # Corresponds to spi1
+SPI_SCK = 18       # GP10 is hardware SPI1 SCK
+SPI_MOSI = 19      # GP11 is hardware SPI1 TX (MOSI)
+SPI_MISO = 16      # GP12 is hardware SPI1 RX (MISO)
+SPI_CS = 17
+SPI_BAUDRATE = 400000  # 400 kHz
+
+# ---------------- HARDWARE CONSTANTS ----------------
+DIVIDER_RESISTANCE = 1.0
+SENSE_RESISTANCE = 1.0
+CURRENT_RANGE = 1.0
+
+# ---------------- ACS REGISTERS ----------------
+REG_POWER_DATA = 0x20
+txBuffer = bytearray(8)
+# ---------------- SPI SETUP ----------------
+spi = SPI(SPI_PORT,
+          baudrate=SPI_BAUDRATE,
+          polarity=1,
+          phase=1,
+          firstbit=SPI.LSB,
+          sck=Pin(SPI_SCK),
+          mosi=Pin(SPI_MOSI),
+          miso=Pin(SPI_MISO)),
+cs = Pin(SPI_CS, Pin.OUT)
+cs.value(1)  # CS high initially
+
+# ---------------- SPI READ ----------------
+def read_register(spi, cs, address):
+    cmd = (address & 0x7F) | 0x80   #  add READ bit
+
+    # -------- STEP 1: request --------
+    cs.value(0)
+    spi.write(bytearray([cmd, 0, 0, 0, 0]))
+    cs.value(1)
+
+    time.sleep_us(5)  # small delay
+
+    # -------- STEP 2: receive --------
+    rx = bytearray(5)
+
+    cs.value(0)
+    spi.write_readinto(bytearray([cmd, 0, 0, 0, 0]), rx)
+    cs.value(1)
+
+    # Combine bytes (LSB first)
+    data = (
+        rx[1] |
+        (rx[2] << 8) |
+        (rx[3] << 16) |
+        (rx[4] << 24)
+    )
+    return data
+def read_rms(spi, cs, divider_resistance, sense_resistance, current_range):
+    raw = read_register(spi, cs, 0x20)
+
+    vrms = raw & 0x7FFF
+    irms = (raw >> 16) & 0x7FFF
+
+    # Convert (based on datasheet scaling)
+    volts = vrms * (current_range / 16384.0)
+    amps = irms * (current_range / 16384.0)
+
+    return volts, amps, vrms, irms
+   
+# ---------------- PACKET BUILD ----------------
+def build_packet(voltage, current):
+
+    v_fixed = int(voltage * 100)
+    i_fixed = int(current * 100)
+
+    txBuffer[0] = 0xAA
+    txBuffer[1] = (v_fixed >> 8) & 0xFF
+    txBuffer[2] = v_fixed & 0xFF
+    txBuffer[3] = (i_fixed >> 8) & 0xFF
+    txBuffer[4] = i_fixed & 0xFF
+    txBuffer[5] = 0x00
+
+    txBuffer[6] = (txBuffer[1] + txBuffer[2] + txBuffer[3] + txBuffer[4]) & 0xFF
+    txBuffer[7] = 0x55
+# ---------------- MAIN LOOP ----------------
+print("Pico 2 Power Monitor Ready")
+
+while True:
+
+    voltage, current, vrms_raw, irms_raw = read_rms(
+        spi,
+        cs,
+        DIVIDER_RESISTANCE,
+        SENSE_RESISTANCE,
+        CURRENT_RANGE,
+    )
+
+    build_packet(voltage, current)
+
+    print("RAW:", vrms_raw, irms_raw)
+    #print("Voltage: {:.3f} V | Current: {:.3f} A".format(voltage, current))
+
+    time.sleep_ms(200)
