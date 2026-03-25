@@ -1,18 +1,36 @@
-import smbus
-import time
+#include <Wire.h>
 
-bus = smbus.SMBus(1)
+#define PICO1 0x42
+#define PICO2 0x43
 
-PICO1 = 0x42
-PICO2 = 0x43
+uint32_t readPico(uint8_t addr) {
+    uint32_t value = 0;
 
-def read_pico(addr):
-    data = bus.read_i2c_block_data(addr, 0, 4)
-    return data[0] | (data[1]<<8) | (data[2]<<16) | (data[3]<<24)
+    Wire.requestFrom(addr, (uint8_t)4);
 
-while True:
-    val1 = read_pico(PICO1)
-    val2 = read_pico(PICO2)
+    if (Wire.available() == 4) {
+        value  = Wire.read();
+        value |= Wire.read() << 8;
+        value |= Wire.read() << 16;
+        value |= Wire.read() << 24;
+    }
 
-    print("Pico1:", val1, " | Pico2:", val2)
-    time.sleep(0.5)
+    return value;
+}
+
+void setup() {
+    Serial.begin(115200);
+    Wire.begin();  // master mode
+}
+
+void loop() {
+    uint32_t val1 = readPico(PICO1);
+    uint32_t val2 = readPico(PICO2);
+
+    Serial.print("Pico1: ");
+    Serial.print(val1);
+    Serial.print(" | Pico2: ");
+    Serial.println(val2);
+
+    delay(500);
+}
