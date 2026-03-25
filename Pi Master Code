@@ -1,11 +1,8 @@
 #include <Wire.h>
-
-#define PICO1 0x42
-#define PICO2 0x43
+#define PICO 0x42
 
 uint32_t readPico(uint8_t addr) {
     uint32_t value = 0;
-
     Wire.requestFrom(addr, (uint8_t)4);
 
     if (Wire.available() == 4) {
@@ -20,17 +17,14 @@ uint32_t readPico(uint8_t addr) {
 
 void setup() {
     Serial.begin(115200);
-    Wire.begin();  // master mode
+    Wire.begin();  
 }
 
 void loop() {
-    uint32_t val1 = readPico(PICO1);
-    uint32_t val2 = readPico(PICO2);
+    uint32_t val1 = readPico(PICO);
 
-    Serial.print("Pico1: ");
-    Serial.print(val1);
-    Serial.print(" | Pico2: ");
-    Serial.println(val2);
+    Serial.print("Pico: ");
+    Serial.print(val);
 
     delay(500);
 }
