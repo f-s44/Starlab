@@ -13,68 +13,84 @@ int32_t SignExtendBitfield(uint32_t data, uint16_t width);
 #define kREADERROR 1
 #define kWRITEERROR 2
  
-// --- UPDATED FOR PICO 2 SPI0 PINS ---
-const uint16_t SPIChipSelectPin = 17; // Pico GP17
+// ---  PICO 2 SPI0 PINS ---
+const uint16_t SPI_CS1 = 17;          // Pico GP17
+const uint16_t SPI_CS2 = 20;          // Pico GP20
+const uint16_t SPI_CS3 = 21;          // Pico GP21
 const uint16_t SCK_PIN = 18;          // Pico GP18
 const uint16_t TX_PIN = 19;           // Pico GP19 (MOSI)
 const uint16_t RX_PIN = 16;           // Pico GP16 (MISO)
 // ------------------------------------
+const uint16_t Current_CS = SPI_CS2;            // FIX ME FIX ME FIX ME FIX ME FIX ME FIX ME
 
-const uint16_t I2CAddress0 = 9;
-const uint16_t I2CAddress1 = 11;
-const uint16_t I2CAddress = 96;
-const uint16_t ProtocolSelectPin = 15; // Moved off GP16 to avoid SPI conflict
  
 const uint32_t WRITE = 0x00;
 const uint32_t READ = 0x80;
 const uint32_t COMMAND_MASK = 0x80;
 const uint32_t ADDRESS_MASK = 0x7F;
+
+// ACS37800 properties:
+const float SensI = 916.7;                      // datasheet
+const float SensV = 110.0;                      // datasheet
+//const float SFline2device = 5600.0/(5600.0+240000.0*4.0)*1000.0;    // voltage divider - MUST CHANGE FOR NEW DIVIDERS
+const float SensI_Gain = 1.005;                 // sensor dependent
+const float SensV_Gain = 1.0285;                // sensor dependent
+const float SensI_Offest = -0.0853;             // offest affected by changes in magnetic field
+
+const float SFline2device = 6900.0/(6900.0+1000000.0*4.0)*1000.0;    // voltage divider - MUST CHANGE FOR NEW DIVIDERS
+const float SensI_Offest_2 = -0.0253;             // offest for sensor 2
+
+//
+
+// wire resistance:
+const float Wire_resistance = 0.0585;           // wire from sensor VREF to (-) load side (ohms)
+//
  
 unsigned long nextTime;
-bool UseI2C = false;
  
+
 void setup()
 {
-    pinMode(ProtocolSelectPin, INPUT_PULLUP);
-    delay(50); 
+
+
+    // PICO 2 SPI INITIALIZATION
+    SPI.setSCK(SCK_PIN);
+    SPI.setTX(TX_PIN);
+    SPI.setRX(RX_PIN);
+    SPI.begin(); 
+ 
+    pinMode(SPI_CS1, OUTPUT);
+    pinMode(SPI_CS2, OUTPUT);
+    pinMode(SPI_CS3, OUTPUT);
+    digitalWrite(SPI_CS1, HIGH);
+    digitalWrite(SPI_CS2, HIGH);
+    digitalWrite(SPI_CS3, HIGH);
 
  
-    if (UseI2C)
-    {
-        // I2C Setup (Leaving as is, though you are using SPI)
-        Wire.begin(); 
-        Wire.setClock(100000);
-        pinMode(I2CAddress0, OUTPUT);
-        pinMode(I2CAddress1, OUTPUT);
-        digitalWrite(I2CAddress0, LOW);
-        digitalWrite(I2CAddress1, LOW);
-    }
-    else
-    {
-        // --- UPDATED PICO 2 SPI INITIALIZATION ---
-        SPI.setSCK(SCK_PIN);
-        SPI.setTX(TX_PIN);
-        SPI.setRX(RX_PIN);
-        SPI.begin(); 
- 
-        pinMode(SPIChipSelectPin, OUTPUT);
-        digitalWrite(SPIChipSelectPin, HIGH);
- 
-        uint32_t unused;
-        Read(0x0, unused);
-    }
- 
+    uint32_t unused;
+    Read(0x0, unused);
+
+
     Write(0x2F, 0x4F70656E);   // Unlock device
+
+
+    // Enable DC averaging & set sample # to 1023
+    uint32_t shadow1F = 0;
+    Read(0x1F, shadow1F);
+
+    // Clear out the old data in bits 24 down to 14
+    shadow1F &= ~(0x7FFUL << 14);
     
+    // Set bit 24 (bypass_n_en = 1) AND bits 23:14 (n = 1023)
+    shadow1F |= (1UL << 24) | (1023UL << 14);
+    Write(0x1F, shadow1F);
+  
+
+
     Serial.begin(115200);
     while (!Serial);
     
-    if (UseI2C) {
-        Serial.println("Using I2C version of ACS37800");
-    } else {
-        Serial.println("Using SPI version of ACS37800");
-    }
- 
+
     nextTime = millis();
 }
 
@@ -84,100 +100,31 @@ void setup()
  */
 void loop()
 {
-    uint32_t vrms;
-    uint32_t irms;
-    uint32_t pactive;
-    uint32_t paparent;
-    uint32_t pimag;
-    uint32_t pfactor;
-    uint32_t numptsout;
-    uint32_t vrmsavgonesec;
-    uint32_t irmsavgonesec;
-    uint32_t vrmsavgonemin;
-    uint32_t irmsavgonemin;
-    uint32_t pactavgonesec;
-    uint32_t pactavgonemin;
-    uint32_t vcodes;
-    uint32_t icodes;
-    uint32_t pinstant;
-    uint32_t flags;
-    uint32_t v_i_v_rms_o;
-    uint32_t v_pactive_o;
-    uint32_t v_papparent_o;
-    uint32_t v_numptsout_o;
-    uint32_t v_vrmsavgs_o;
-    uint32_t v_vrmsavgm_o;
-    uint32_t v_pactavgs_o;
-    uint32_t v_pactavgm_o;
-    uint32_t v_vcodes_o;
-    uint32_t v_pinstant_o;
-    uint32_t v_dsp_status_o;
+
+    uint32_t v_i_v_rms_o;   // register containing VRMS and IRMS
+
     
-    
-    // Every 1/2 second, toggle the state of the LED and read the ACS37800
+    // Reads the ACS37800 every 500ms
     if (nextTime < millis())
     {
         Read(0x20, v_i_v_rms_o);
-        Read(0x21, v_pactive_o);
-        Read(0x22, v_papparent_o);
-        Read(0x25, v_numptsout_o);
-        Read(0x26, v_vrmsavgs_o);
-        Read(0x27, v_vrmsavgm_o);
-        Read(0x28, v_pactavgs_o);
-        Read(0x29, v_pactavgm_o);
-        Read(0x2A, v_vcodes_o);
-        Read(0x2C, v_pinstant_o);
-        Read(0x2D, v_dsp_status_o);
  
- 
-        /*vrms = v_i_v_rms_o & 0xFFFF;
-        Serial.printf("vrms = %ul, %f\n", vrms, ConvertUnsignedFixedPoint(vrms, 16, 16));
-        irms = (v_i_v_rms_o >> 16) & 0xFFFF;
-        Serial.printf("irms = %ul, %f\n", irms, ConvertUnsignedFixedPoint(irms, 16, 16));
-        pactive = v_pactive_o & 0xFFFF;
-        Serial.printf("pactive = %dl, %f\n", pactive, ConvertSignedFixedPoint(pactive, 15, 16));
-        pimag = (v_pactive_o >> 16) & 0xFFFF;
-        Serial.printf("pimag = %ul, %f\n", pimag, ConvertUnsignedFixedPoint(pimag, 16, 16));       
-        paparent = v_papparent_o & 0xFFFF;
-        Serial.printf("paparent = %ul, %f\n", paparent, ConvertUnsignedFixedPoint(pactive, 15, 16));        
-        pfactor = (v_papparent_o >> 16) & 0x7FF;
-        Serial.printf("pfactor = %dl, %f\n", pfactor, fabs(ConvertSignedFixedPoint(pfactor, 10, 11)));
-        numptsout = v_numptsout_o & 0x3FF;          
-        Serial.printf("numptsout = %ul\n", numptsout);
-        vrmsavgonesec = v_vrmsavgs_o & 0xFFFF;
-        Serial.printf("vrmsavgonesec = %ul, %f\n", vrmsavgonesec, ConvertUnsignedFixedPoint(vrmsavgonesec, 16, 16));
-        irmsavgonesec = (v_vrmsavgs_o >> 16) & 0xFFFF;
-        Serial.printf("irmsavgonesec = %ul, %f\n", irmsavgonesec, ConvertUnsignedFixedPoint(irmsavgonesec, 16, 16));
-        vrmsavgonemin = v_vrmsavgm_o & 0xFFFF;
-        Serial.printf("vrmsavgonemin = %ul, %f\n", vrmsavgonemin, ConvertUnsignedFixedPoint(vrmsavgonemin, 16, 16));
-        irmsavgonemin = (v_vrmsavgm_o >> 16) & 0xFFFF;
-        Serial.printf("irmsavgonemin = %ul, %f\n", irmsavgonemin, ConvertUnsignedFixedPoint(irmsavgonemin, 16, 16));
-        pactavgonesec = v_pactavgs_o & 0xFFFF;
-        Serial.printf("pactavgonesec = %ul, %f\n", pactavgonesec, ConvertSignedFixedPoint(pactavgonesec, 15, 16));
-        pactavgonemin = v_pactavgm_o & 0xFFFF;
-        Serial.printf("pactavgonemin = %ul, %f\n", pactavgonemin, ConvertSignedFixedPoint(pactavgonemin, 15, 16));
-        vcodes = v_vcodes_o & 0xFFFF;
-        Serial.printf("vcodes = %ul, %f\n", vcodes, ConvertSignedFixedPoint(vcodes, 15, 16)); */
-        icodes = (v_vcodes_o >> 16) & 0xFFFF;
-        Serial.printf("icodes = %ul, %f, %f\n", icodes, ConvertSignedFixedPoint(icodes, 15, 16), 30*ConvertSignedFixedPoint(icodes, 15, 16)) ;         
-        /*pinstant = v_pinstant_o & 0xFFFF;
-        Serial.printf("pinstant = %ul, %f\n", pinstant, ConvertSignedFixedPoint(pinstant, 15, 16));
-        
-        Serial.print("pospf = ");
-        Serial.println((v_papparent_o >> 28) & 0x1);
-        Serial.print("posangle = ");
-        Serial.println((v_papparent_o >> 27) & 0x1);
-        Serial.print("undervoltage = ");
-        Serial.println((v_dsp_status_o >> 4) & 0x1);
-        Serial.print("overvoltage = ");
-        Serial.println((v_dsp_status_o >> 3) & 0x1);
-        Serial.print("faultlatched = ");
-        Serial.println((v_dsp_status_o >> 2) & 0x1);
-        Serial.print("faultout = ");
-        Serial.println((v_dsp_status_o >> 1) & 0x1);
-        Serial.print("vzerocrossout = ");
-        Serial.println(v_dsp_status_o & 0x1);
-        Serial.println(); */
+        // Extract the 16-bit VRMS and IRMS raw codes
+        uint32_t vrms_raw = v_i_v_rms_o & 0xFFFF;
+        uint32_t irms_raw = (v_i_v_rms_o >> 16) & 0xFFFF;
+
+        // calculations, end Sens_Gain is sensor dependent
+        float voltage = vrms_raw / (2 * SensV * SFline2device) * SensV_Gain;
+        float current = irms_raw / (2 * SensI) * SensI_Gain + SensI_Offest;
+
+        // wire resistance
+        voltage = voltage - (current * Wire_resistance);
+
+        // Print VRMS and IRMS
+        Serial.printf("Raw V: %u | Voltage: %.2f V\n", vrms_raw, voltage);
+        Serial.printf("Raw I: %u | Current: %.2f A\n", irms_raw, current);
+        Serial.println("-----------------------------------\n");
+
  
         nextTime = millis() + 500L;
     }
@@ -194,55 +141,37 @@ uint16_t Read(uint8_t address, uint32_t& value)
 {
     uint16_t results = kNOERROR;
  
-    if (UseI2C)
-    {
-        Wire.beginTransmission(I2CAddress);
-        Wire.write(address);
-        results = Wire.endTransmission();
+
+    SPI.beginTransaction(SPISettings(1000000, LSBFIRST, SPI_MODE3));
+
+    // Combine the register address and the command into one byte
+    uint8_t command = (address & ADDRESS_MASK) | READ;
  
-        if (results == kNOERROR)
-        {
-            Wire.requestFrom(I2CAddress, 4u);
+    // take the chip select low to select the device
+    digitalWrite(Current_CS, LOW);
+
+    // send the device the register you want to read
+    SPI.transfer(command);
+    SPI.transfer(0);
+    SPI.transfer(0);
+    SPI.transfer(0);
+    SPI.transfer(0);
+
+    digitalWrite(Current_CS, HIGH);
+    delayMicroseconds(4);
+    digitalWrite(Current_CS, LOW);
+
+    // send the command again to read the contents
+    SPI.transfer(command);
+    value = (uint32_t)SPI.transfer(0);
+    value |= (uint32_t)SPI.transfer(0) << 8;
+    value |= (uint32_t)SPI.transfer(0) << 16;
+    value |= (uint32_t)SPI.transfer(0) << 24; // high byte
+
+    // take the chip select high to de-select
+    digitalWrite(Current_CS, HIGH);
  
-            value = Wire.read();    // receive a byte as character
-            value |= Wire.read() << 8;    // receive a byte as character
-            value |= Wire.read() << 16;    // receive a byte as character
-            value |= Wire.read() << 24;    // receive a byte as character
-        }
-    }
-    else
-    {
-        SPI.beginTransaction(SPISettings(1000000, LSBFIRST, SPI_MODE3));
- 
-        // Combine the register address and the command into one byte
-        uint8_t command = (address & ADDRESS_MASK) | READ;
- 
-        // take the chip select low to select the device
-        digitalWrite(SPIChipSelectPin, LOW);
- 
-        // send the device the register you want to read
-        SPI.transfer(command);
-        SPI.transfer(0);
-        SPI.transfer(0);
-        SPI.transfer(0);
-        SPI.transfer(0);
- 
-        digitalWrite(SPIChipSelectPin, HIGH);
-        delayMicroseconds(4);
-        digitalWrite(SPIChipSelectPin, LOW);
- 
-        // send the command again to read the contents
-        SPI.transfer(command);
-        value = (uint32_t)SPI.transfer(0);
-        value |= (uint32_t)SPI.transfer(0) << 8;
-        value |= (uint32_t)SPI.transfer(0) << 16;
-        value |= (uint32_t)SPI.transfer(0) << 24; // high byte
- 
-        // take the chip select high to de-select
-        digitalWrite(SPIChipSelectPin, HIGH);
- 
-        SPI.endTransaction();
-    }
+    SPI.endTransaction();
  
     return results;
 }
@@ -258,39 +187,29 @@ uint16_t Write(uint8_t address, uint32_t value)
 {
     uint16_t results = kNOERROR;
  
-    if (UseI2C)
-    {
-        Wire.beginTransmission(I2CAddress);
-        // Send the address then the value (least significant byte first)
-        Wire.write(address);
-        Wire.write(value);    
-        Wire.write(value >> 8);
-        Wire.write(value >> 16);
-        Wire.write(value >> 24);
-        results = Wire.endTransmission();
-    }
-    else
-    {
-        SPI.beginTransaction(SPISettings(1000000, LSBFIRST, SPI_MODE3));
+
+
+    SPI.beginTransaction(SPISettings(1000000, LSBFIRST, SPI_MODE3));
  
-        // Combine the register address and the command into one byte
-        uint8_t command = ((address & ADDRESS_MASK) | WRITE);
+    // Combine the register address and the command into one byte
+    uint8_t command = ((address & ADDRESS_MASK) | WRITE);
  
-        // take the chip select low to select the device:
-        digitalWrite(SPIChipSelectPin, LOW);
+    // take the chip select low to select the device:
+    digitalWrite(Current_CS, LOW);
  
-        // Send the command then the value (least significant byte first)
-        SPI.transfer(command);
-        SPI.transfer((uint8_t)value);
-        SPI.transfer((uint8_t)(value >> 8));
-        SPI.transfer((uint8_t)(value >> 16));
-        SPI.transfer((uint8_t)(value >> 24));
+    // Send the command then the value (least significant byte first)
+    SPI.transfer(command);
+    SPI.transfer((uint8_t)value);
+    SPI.transfer((uint8_t)(value >> 8));
+    SPI.transfer((uint8_t)(value >> 16));
+    SPI.transfer((uint8_t)(value >> 24));
  
-        // take the chip select high to de-select:
-        digitalWrite(SPIChipSelectPin, HIGH);
+    // take the chip select high to de-select:
+    digitalWrite(Current_CS, HIGH);
  
-        SPI.endTransaction();
-    }
+    SPI.endTransaction();
+
+
     if (address < 0x10)
     {
         delay(30);  // If writing to EEPROM delay 30 ms
@@ -334,7 +253,7 @@ float ConvertUnsignedFixedPoint(uint32_t inputValue, uint16_t binaryPoint, uint1
 float ConvertSignedFixedPoint(uint32_t inputValue, uint16_t binaryPoint, uint16_t width)
 {
     int32_t signedValue = SignExtendBitfield(inputValue, width);
-    return (float)signedValue / (float)(1L << binaryPoint);
+    return (float)signedValue / (float)(1L << binaryPoint); 
 }
  
 /*
