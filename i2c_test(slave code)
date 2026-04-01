@@ -1,0 +1,32 @@
+from machine import Pin, I2C
+from utime import sleep
+
+# LED setup
+pin = Pin("LED", Pin.OUT)
+
+# I2C setup (RP2040 Pico pins GP2=SDA, GP3=SCL)
+i2c = I2C(0, scl=Pin(3), sda=Pin(2), freq=100000)
+slave_addr = 0x42  # the address Pi will read from
+
+print("LED starts flashing and I2C ready...")
+
+while True:
+    try:
+        # Toggle LED
+        pin.toggle()
+        sleep(1)
+
+        # Send a simple message to Pi (like "1" if LED on, "0" if off)
+        msg = b'1' if pin.value() else b'0'
+        try:
+            i2c.writeto(slave_addr, msg)  # MicroPython can write to master as needed
+        except:
+            # If Pi isn’t ready, just continue
+            print("Error")
+            pass
+
+    except KeyboardInterrupt:
+        break
+
+pin.off()
+print("Finished.")
