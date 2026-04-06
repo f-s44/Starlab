@@ -1,11 +1,68 @@
-import smbus
-import struct
+import smbus2
 import time
 
-bus = smbus.SMBus(1)
+# --- I2C Setup ---
+I2C_BUS = 1        # typically 1 on Raspberry Pi
+PICO_ADDR = 0x42   # I2C address of your Pico slave
 
+bus = smbus2.SMBus(I2C_BUS)
+
+# --- Register addresses (example from your Arduino code) ---
+WRITE_REG = 0x2F   # unlock register
+CONFIG_REG = 0x1F  # DC averaging / sample count
+READ_REG = 0x20    # VRMS + IRMS combined register
+
+# --- Conversion constants ---
+SensI = 916.7
+SensV = 110.0
+SFline2device = 6900.0 / (6900.0 + 1000000.0 * 4.0) * 1000.0
+SensI_Gain = 1.005
+SensV_Gain = 1.0285
+SensI_Offest = -0.0853
+Wire_resistance = 0.0585
+
+def write_register(register, value):
+    """Write a 32-bit value to a register (MSB first)."""
+    data = [
+        (value >> 24) & 0xFF,
+        (value >> 16) & 0xFF,
+        (value >> 8) & 0xFF,
+        value & 0xFF
+    ]
+    bus.write_i2c_block_data(PICO_ADDR, register, data)
+
+def read_register(register):
+    """Read a 32-bit value from a register (MSB first)."""
+    data = bus.read_i2c_block_data(PICO_ADDR, register, 4)
+    value = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]
+    return value
+
+# --- Initialization / Unlock ---
+write_register(WRITE_REG, 0x4F70656E)  # unlock device ("Open")
+time.sleep(0.05)
+
+# --- Configure DC averaging & sample count ---
+shadow1F = read_register(CONFIG_REG)
+# clear bits 24 down to 14
+shadow1F &= ~(0x7FF << 14)
+# set bit 24 (bypass_n_en=1) and bits 23:14 (n=1023)
+shadow1F |= (1 << 24) | (1023 << 14)
+write_register(CONFIG_REG, shadow1F)
+time.sleep(0.05)
+
+print("Pico initialized over I2C!")
+
+# --- Main loop: read VRMS and IRMS every 500ms ---
 while True:
-    data = bus.read_i2c_block_data(0x42, 0, 4)
-    value = struct.unpack("<I", bytes(data))[0]
-    print(value)
+    val = read_register(READ_REG)
+    vrms_raw = val & 0xFFFF
+    irms_raw = (val >> 16) & 0xFFFF
+
+    voltage = vrms_raw / (2 * SensV * SFline2device) * SensV_Gain
+    current = irms_raw / (2 * SensI) * SensI_Gain + SensI_Offest
+    voltage -= current * Wire_resistance
+
+    print(f"Raw V: {vrms_raw} | Voltage: {voltage:.2f} V")
+    print(f"Raw I: {irms_raw} | Current: {current:.2f} A")
+    print("---------------------------")
     time.sleep(0.5)
