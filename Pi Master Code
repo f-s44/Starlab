@@ -7,7 +7,6 @@ PICO_ADDR = 0x42   # I2C address of your Pico slave
 
 bus = smbus2.SMBus(I2C_BUS)
 
-# --- Register addresses (example from your Arduino code) ---
 WRITE_REG = 0x2F   # unlock register
 CONFIG_REG = 0x1F  # DC averaging / sample count
 READ_REG = 0x20    # VRMS + IRMS combined register
