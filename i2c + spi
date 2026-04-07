@@ -15,6 +15,15 @@ void sendDataToPi();
 #define kREADERROR 1
 #define kWRITEERROR 2
  
+// ---  PICO 2 I2C PINS ---
+const uint16_t I2C_GND = 3;         // Pico GP3
+const uint16_t I2C_SDA = 4;         // Pico GP4
+const uint16_t I2C_SCL = 5;         // Pico GP5
+const uint16_t I2C_VSYS = 39;         // Pico GP39
+
+// I2C slave address
+const uint8_t I2C_SLAVE_ADDR = 0x42;
+
 // ---  PICO 2 SPI0 PINS ---
 const uint16_t SPI_CS1 = 17;          // Pico GP17
 const uint16_t SPI_CS2 = 20;          // Pico GP20
@@ -50,8 +59,6 @@ unsigned long nextTime;
 volatile uint32_t latest_irms_raw = 0;
 volatile float latest_current = 0.0;
 
-// I2C slave address
-const uint8_t I2C_SLAVE_ADDR = 0x42;
 
 void setup()
 {
@@ -85,7 +92,6 @@ void setup()
     shadow1F |= (1UL << 24) | (1023UL << 14);
     Write(0x1F, shadow1F);
   
-
 
     Serial.begin(115200);
     while (!Serial);
