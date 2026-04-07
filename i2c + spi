@@ -1,7 +1,8 @@
+
+
 #include <SPI.h>
 #include <Wire.h>
-#include <hardware/i2c.h> 
-
+#include <hardware/i2c.h>
 #include <pico/stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -23,8 +24,8 @@ void receiveFromPi(int len);
 #define kWRITEERROR 2
 
 // ---  PICO 2 I2C PINS ---
-const uint16_t I2C_SDA = 7;         // Pico GP7
-const uint16_t I2C_SCL = 5;         // Pico GP5
+const uint16_t I2C_SDA = 6;         // Pico GP6
+const uint16_t I2C_SCL = 7;         // Pico GP7
 
 // I2C slave address
 const uint8_t I2C_SLAVE_ADDR = 0x42;
@@ -67,6 +68,48 @@ unsigned long nextTime;
 volatile uint32_t latest_irms_raw = 0;
 volatile float latest_current = 0.0;
 volatile uint8_t selectedRegister = 0x42;
+volatile bool i2c_transfer_in_progress = false;
+
+// ------------------- I2C Slave Memory -------------------
+static struct {
+    uint8_t mem[256];
+    uint8_t mem_address;
+} context;
+
+static void slave_on_receive(int count) {
+    if (count < 1) return;
+    context.mem_address = Wire.read();
+    while (Wire.available()) {
+        context.mem[context.mem_address++] = Wire.read();
+    }
+}
+
+static void slave_on_request() {
+    Wire.write(context.mem[context.mem_address++]);
+    
+}// ------------------- I2C Slave Handlers -------------------
+void receiveFromPi(int len) {
+    if (len < 1) return;
+    i2c_transfer_in_progress = true;
+    selectedRegister = Wire.read();
+    i2c_transfer_in_progress = false;
+}
+
+void sendDataToPi() {
+    switch (selectedRegister) {
+        case 0x01:
+            Wire.write((uint8_t*)&latest_irms_raw, sizeof(latest_irms_raw));
+            break;
+        case 0x02:
+            Wire.write((uint8_t*)&latest_current, sizeof(latest_current));
+            break;
+        default: {
+            uint32_t zero = 0;
+            Wire.write((uint8_t*)&zero, sizeof(zero));
+            break;
+        }
+    }
+}
  
 
 void setup()
@@ -159,36 +202,6 @@ void loop()
     }
 }
  
-// --- I2C Slave Transfer Tracking ---
-volatile bool i2c_transfer_in_progress = false;
-
-// Called when master writes data to the slave
-void receiveFromPi(int len) {
-    if (len < 1) return;
-
-    i2c_transfer_in_progress = true;    // start transfer
-    selectedRegister = Wire.read();     // first byte = register
-    i2c_transfer_in_progress = false;   // finished receiving register
-}
-
-void sendDataToPi()
-{
-    switch (selectedRegister)
-    {
-        case 0x01: // raw IRMS
-            Wire.write((uint8_t*)&latest_irms_raw, sizeof(latest_irms_raw));
-            break;
-        case 0x02: // float current
-            Wire.write((uint8_t*)&latest_current, sizeof(latest_current));
-            break;
-        default:
-        {
-            uint32_t zero = 0;
-            Wire.write((uint8_t*)&zero, sizeof(zero));
-            break;
-        }
-    }
-}
 /*
  * Read a register
  *
