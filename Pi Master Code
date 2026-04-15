@@ -1,67 +1,54 @@
 import smbus2
 import time
+import struct
 
 # --- I2C Setup ---
-I2C_BUS = 1        
-PICO_ADDR = 0x42   # I2C address of your Pico slave
+I2C_BUS = 1         
+PICO_ADDR = 0x42   
 
 bus = smbus2.SMBus(I2C_BUS)
 
-WRITE_REG = 0x2F   # unlock register
-CONFIG_REG = 0x1F  # DC averaging / sample count
-READ_REG = 0x20    # VRMS + IRMS combined register
+REG_IRMS_RAW = 0x01  
+REG_CURRENT  = 0x02  
 
-# --- Conversion constants ---
-SensI = 916.7
-SensV = 110.0
-SFline2device = 6900.0 / (6900.0 + 1000000.0 * 4.0) * 1000.0
-SensI_Gain = 1.005
-SensV_Gain = 1.0285
-SensI_Offest = -0.0853
-Wire_resistance = 0.0585
+def read_pico_data(register_addr):
+    """
+    Tells the Pico which register we want, then reads 4 bytes.
+    """
+    try:
+        write = smbus2.i2c_msg.write(PICO_ADDR, [register_addr])
+        read = smbus2.i2c_msg.read(PICO_ADDR, 4)
+        
+        bus.i2c_rdwr(write, read)
+        
+        data = list(read)
+        return data
+    except Exception as e:
+        print(f"I2C Error: {e}")
+        return None
 
-def write_register(register, value):
-    """Write a 32-bit value to a register (MSB first)."""
-    data = [
-        (value >> 24) & 0xFF,
-        (value >> 16) & 0xFF,
-        (value >> 8) & 0xFF,
-        value & 0xFF
-    ]
-    bus.write_i2c_block_data(PICO_ADDR, register, data)
+print("Starting Pico I2C Reader...")
+print("---------------------------")
 
-def read_register(register):
-    """Read a 32-bit value from a register (MSB first)."""
-    data = bus.read_i2c_block_data(PICO_ADDR, register, 4)
-    value = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]
-    return value
-
-# --- Initialization / Unlock ---
-write_register(WRITE_REG, 0x4F70656E)  # unlock device ("Open")
-time.sleep(0.05)
-
-# --- Configure DC averaging & sample count ---
-shadow1F = read_register(CONFIG_REG)
-# clear bits 24 down to 14
-shadow1F &= ~(0x7FF << 14)
-# set bit 24 (bypass_n_en=1) and bits 23:14 (n=1023)
-shadow1F |= (1 << 24) | (1023 << 14)
-write_register(CONFIG_REG, shadow1F)
-time.sleep(0.05)
-
-print("Pico initialized over I2C!")
-
-# --- Main loop: read VRMS and IRMS every 500ms ---
 while True:
-    val = read_register(READ_REG)
-    vrms_raw = val & 0xFFFF
-    irms_raw = (val >> 16) & 0xFFFF
+    # 1. Read Raw IRMS (uint32_t)
+    raw_data = read_pico_data(REG_IRMS_RAW)
+    if raw_data:
+        irms_raw = struct.unpack('<I', bytes(raw_data))[0]
+    else:
+        irms_raw = 0
 
-    voltage = vrms_raw / (2 * SensV * SFline2device) * SensV_Gain
-    current = irms_raw / (2 * SensI) * SensI_Gain + SensI_Offest
-    voltage -= current * Wire_resistance
+    # 2. Read Calculated Current (float)
+    float_data = read_pico_data(REG_CURRENT)
+    if float_data:
+        # 'f' is float (4 bytes), '<' is little-endian
+        current_float = struct.unpack('<f', bytes(float_data))[0]
+    else:
+        current_float = 0.0
 
-    print(f"Raw V: {vrms_raw} | Voltage: {voltage:.2f} V")
-    print(f"Raw I: {irms_raw} | Current: {current:.2f} A")
+    # Print results
+    print(f"Pico Raw IRMS: {irms_raw}")
+    print(f"Pico Float Current: {current_float:.3f} A")
     print("---------------------------")
+    
     time.sleep(0.5)
