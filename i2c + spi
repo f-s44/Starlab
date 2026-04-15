@@ -1,11 +1,5 @@
-
-
 #include <SPI.h>
 #include <Wire.h>
-#include <hardware/i2c.h>
-#include <pico/stdlib.h>
-#include <stdio.h>
-#include <string.h>
 
 
 // --- Function Prototypes ---
@@ -24,8 +18,8 @@ void receiveFromPi(int len);
 #define kWRITEERROR 2
 
 // ---  PICO 2 I2C PINS ---
-const uint16_t I2C_SDA = 6;         // Pico GP6
-const uint16_t I2C_SCL = 7;         // Pico GP7
+const uint16_t I2C_SDA = 4;         // Pico GP4
+const uint16_t I2C_SCL = 5;         // Pico GP5
 
 // I2C slave address
 const uint8_t I2C_SLAVE_ADDR = 0x42;
@@ -38,7 +32,7 @@ const uint16_t SCK_PIN = 18;          // Pico GP18
 const uint16_t TX_PIN = 19;           // Pico GP19 (MOSI)
 const uint16_t RX_PIN = 16;           // Pico GP16 (MISO)
 // ------------------------------------
-const uint16_t Current_CS = SPI_CS2;            // FIX ME FIX ME FIX ME FIX ME FIX ME FIX ME
+const uint16_t Current_CS = SPI_CS1;            // FIX ME FIX ME FIX ME FIX ME FIX ME FIX ME
 
  
 const uint32_t WRITE = 0x00;
@@ -49,12 +43,12 @@ const uint32_t ADDRESS_MASK = 0x7F;
 // ACS37800 properties:
 const float SensI = 916.7;                      // datasheet
 const float SensV = 110.0;                      // datasheet
-//const float SFline2device = 5600.0/(5600.0+240000.0*4.0)*1000.0;    // voltage divider - MUST CHANGE FOR NEW DIVIDERS
+const float SFline2device = 5600.0/(5600.0+240000.0*4.0)*1000.0;    // voltage divider - MUST CHANGE FOR NEW DIVIDERS
 const float SensI_Gain = 1.005;                 // sensor dependent
 const float SensV_Gain = 1.0285;                // sensor dependent
 const float SensI_Offest = -0.0853;             // offest affected by changes in magnetic field
 
-const float SFline2device = 6900.0/(6900.0+1000000.0*4.0)*1000.0;    // voltage divider - MUST CHANGE FOR NEW DIVIDERS
+//const float SFline2device = 6900.0/(6900.0+1000000.0*4.0)*1000.0;    // voltage divider - MUST CHANGE FOR NEW DIVIDERS
 const float SensI_Offest_2 = -0.0253;             // offest for sensor 2
 
 
@@ -67,54 +61,55 @@ unsigned long nextTime;
 // Latest readings for I2C
 volatile uint32_t latest_irms_raw = 0;
 volatile float latest_current = 0.0;
+volatile uint32_t latest_vrms_raw = 0;
+volatile float latest_voltage = 0.0;
 volatile uint8_t selectedRegister = 0x42;
 volatile bool i2c_transfer_in_progress = false;
 
-// ------------------- I2C Slave Memory -------------------
-static struct {
-    uint8_t mem[256];
-    uint8_t mem_address;
-} context;
+// ------------------- I2C Slave Handlers -------------------
 
-static void slave_on_receive(int count) {
-    if (count < 1) return;
-    context.mem_address = Wire.read();
-    while (Wire.available()) {
-        context.mem[context.mem_address++] = Wire.read();
-    }
-}
-
-static void slave_on_request() {
-    Wire.write(context.mem[context.mem_address++]);
-    
-}// ------------------- I2C Slave Handlers -------------------
 void receiveFromPi(int len) {
-    if (len < 1) return;
-    i2c_transfer_in_progress = true;
-    selectedRegister = Wire.read();
-    i2c_transfer_in_progress = false;
+    if (len > 0) {
+        selectedRegister = Wire.read(); 
+        while(Wire.available()) Wire.read();
+    }
 }
 
 void sendDataToPi() {
-    switch (selectedRegister) {
-        case 0x01:
-            Wire.write((uint8_t*)&latest_irms_raw, sizeof(latest_irms_raw));
-            break;
-        case 0x02:
-            Wire.write((uint8_t*)&latest_current, sizeof(latest_current));
-            break;
-        default: {
-            uint32_t zero = 0;
-            Wire.write((uint8_t*)&zero, sizeof(zero));
-            break;
-        }
+    if (selectedRegister == 0x01) {
+        uint8_t* ptr = (uint8_t*)&latest_irms_raw;
+        Wire.write(ptr, 4);
+    } 
+    else if (selectedRegister == 0x02) {
+        uint8_t* ptr = (uint8_t*)&latest_current;
+        Wire.write(ptr, 4);
+    } 
+    else if (selectedRegister == 0x03) {
+        uint8_t* ptr = (uint8_t*)&latest_voltage;
+        Wire.write(ptr, 4);
+    }
+    else if (selectedRegister == 0x04) {
+        // Send Raw VRMS (4 bytes, though only 16-bit used)
+        uint8_t* ptr = (uint8_t*)&latest_vrms_raw;
+        Wire.write(ptr, 4);
+    }
+    else if (selectedRegister == 0x05) {
+        // Sending Voltage [0-3] then Current [4-7]
+        float combined[2];
+        combined[0] = latest_voltage;
+        combined[1] = latest_current;
+        uint8_t* ptr = (uint8_t*)&combined;
+        Wire.write(ptr, 8);
+    }
+    else {
+        uint32_t fail = 0xFFFFFFFF;
+        Wire.write((uint8_t*)&fail, 4);
     }
 }
- 
 
 void setup()
 {
-
+    Serial.begin(115200);
 
     // PICO 2 SPI INITIALIZATION
     SPI.setSCK(SCK_PIN);
@@ -148,17 +143,12 @@ void setup()
     shadow1F |= (1UL << 24) | (1023UL << 14);
     Write(0x1F, shadow1F);
   
-
-
-    Serial.begin(115200);
-    while (!Serial);
-
-     // --- I2C Slave Setup ---
+    // --- I2C Slave Setup ---
     Wire.setSDA(I2C_SDA);
     Wire.setSCL(I2C_SCL);
-    Wire.begin(I2C_SLAVE_ADDR);       // Pico as slave
-    Wire.onReceive(receiveFromPi);    // handle register select
-    Wire.onRequest(sendDataToPi);     // return data on request
+    Wire.begin(I2C_SLAVE_ADDR);
+    Wire.onReceive(receiveFromPi);
+    Wire.onRequest(sendDataToPi);
 
     nextTime = millis();
 }
@@ -167,12 +157,9 @@ void setup()
 /*
  * Every 500 milliseconds, read the ACS37800 and print out the values
  */
-void loop()
-{
-
+void loop() {
     uint32_t v_i_v_rms_o;   // register containing VRMS and IRMS
 
-    
     // Reads the ACS37800 every 500ms
     if (nextTime < millis())
     {
@@ -197,11 +184,13 @@ void loop()
         // Store latest readings for I2C
         latest_irms_raw = irms_raw;
         latest_current = current;
+        latest_vrms_raw = vrms_raw;
+        latest_voltage = voltage;
  
         nextTime = millis() + 500L;
     }
 }
- 
+
 /*
  * Read a register
  *
@@ -350,4 +339,3 @@ int32_t SignExtendBitfield(uint32_t data, uint16_t width)
  
     return (int32_t)((x ^ mask) - mask);
 }
- 
