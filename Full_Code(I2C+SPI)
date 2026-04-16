@@ -47,13 +47,9 @@ const float SensI = 916.7;                      // datasheet
 const float SensV = 110.0;                      // datasheet
 const float SFline2device = 6800.0/(6800.0+240000.0*4.0)*1000.0;    // voltage divider - MUST CHANGE FOR NEW DIVIDERS
 const float SensI_Gain = 1.001984;                 // sensor dependent
-const float SensV_Gain = 0.99545;                // sensor dependent
+const float SensV_Gain = 0.9008;                // sensor dependent
 const float SensI_Offest = -0.009615;             // offest affected by changes in magnetic field
 const float SensV_Offset = -0.00218;
-
-
-//const float SFline2device = 6900.0/(6900.0+1000000.0*4.0)*1000.0;    // voltage divider - MUST CHANGE FOR NEW DIVIDERS
-//const float SensI_Offest_2 = -0.0253;             // offest for sensor 2
 
 
 // wire resistance:
@@ -174,7 +170,7 @@ void loop() {
         uint32_t irms_raw = (v_i_v_rms_o >> 16) & 0xFFFF;
 
         // calculations, end Sens_Gain is sensor dependent
-        float voltage = vrms_raw / (2 * SensV * SFline2device) * SensV_Gain;
+        float voltage = vrms_raw / (2 * SensV * SFline2device) * SensV_Gain + SensV_Offset;
         float current = irms_raw / (2 * SensI) * SensI_Gain + SensI_Offest;
 
         // wire resistance
