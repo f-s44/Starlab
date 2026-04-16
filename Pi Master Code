@@ -48,7 +48,7 @@ while True:
 
     # Display results if read was successful
     if None not in (irms_raw, current, vrms_raw, voltage):
-        print(f"VOLTAGE: {voltage:6.2f} V  (Raw: {vrms_raw})")
+        print(f"VOLTAGE: {voltage:6.3f} V  (Raw: {vrms_raw})")
         print(f"CURRENT: {current:6.3f} A  (Raw: {irms_raw})")
         print("-----------------------------------------------")
     else:
