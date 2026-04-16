@@ -32,7 +32,9 @@ const uint16_t SCK_PIN = 18;          // Pico GP18
 const uint16_t TX_PIN = 19;           // Pico GP19 (MOSI)
 const uint16_t RX_PIN = 16;           // Pico GP16 (MISO)
 // ------------------------------------
-const uint16_t Current_CS = SPI_CS1;            // FIX ME FIX ME FIX ME FIX ME FIX ME FIX ME
+//const uint16_t Current_CS = SPI_CS1;  
+//const uint16_t Current_CS = SPI_CS2; 
+const uint16_t Current_CS = SPI_CS3;           
 
  
 const uint32_t WRITE = 0x00;
@@ -43,17 +45,19 @@ const uint32_t ADDRESS_MASK = 0x7F;
 // ACS37800 properties:
 const float SensI = 916.7;                      // datasheet
 const float SensV = 110.0;                      // datasheet
-const float SFline2device = 5600.0/(5600.0+240000.0*4.0)*1000.0;    // voltage divider - MUST CHANGE FOR NEW DIVIDERS
-const float SensI_Gain = 1.005;                 // sensor dependent
-const float SensV_Gain = 1.0285;                // sensor dependent
-const float SensI_Offest = -0.0853;             // offest affected by changes in magnetic field
+const float SFline2device = 6800.0/(6800.0+240000.0*4.0)*1000.0;    // voltage divider - MUST CHANGE FOR NEW DIVIDERS
+const float SensI_Gain = 1.001984;                 // sensor dependent
+const float SensV_Gain = 0.99545;                // sensor dependent
+const float SensI_Offest = -0.009615;             // offest affected by changes in magnetic field
+const float SensV_Offset = -0.00218;
+
 
 //const float SFline2device = 6900.0/(6900.0+1000000.0*4.0)*1000.0;    // voltage divider - MUST CHANGE FOR NEW DIVIDERS
-const float SensI_Offest_2 = -0.0253;             // offest for sensor 2
+//const float SensI_Offest_2 = -0.0253;             // offest for sensor 2
 
 
 // wire resistance:
-const float Wire_resistance = 0.0585;           // wire from sensor VREF to (-) load side (ohms)
+const float Wire_resistance = 0.01;           // wire from sensor VREF to (-) load side (ohms)
 //
 
 unsigned long nextTime;
