@@ -1,14 +1,12 @@
 #include <SPI.h>
 #include <Wire.h>
 
-
 // --- Function Prototypes ---
 uint16_t Read(uint8_t address, uint32_t& value);
 uint16_t Write(uint8_t address, uint32_t value);
 float ConvertUnsignedFixedPoint(uint32_t inputValue, uint16_t binaryPoint, uint16_t width);
 float ConvertSignedFixedPoint(uint32_t inputValue, uint16_t binaryPoint, uint16_t width);
 int32_t SignExtendBitfield(uint32_t data, uint16_t width);
-
 void sendDataToPi();
 void receiveFromPi(int len);
 // ---------------------------
@@ -47,7 +45,7 @@ const float SensI = 916.7;                      // datasheet
 const float SensV = 110.0;                      // datasheet
 const float SFline2device = 6800.0/(6800.0+240000.0*4.0)*1000.0;    // voltage divider - MUST CHANGE FOR NEW DIVIDERS
 const float SensI_Gain = 1.001984;                 // sensor dependent
-const float SensV_Gain = 0.9008;                // sensor dependent
+const float SensV_Gain = 0.99545;                // sensor dependent
 const float SensI_Offest = -0.009615;             // offest affected by changes in magnetic field
 const float SensV_Offset = -0.00218;
 
@@ -153,7 +151,6 @@ void setup()
     nextTime = millis();
 }
 
- 
 /*
  * Every 500 milliseconds, read the ACS37800 and print out the values
  */
@@ -248,8 +245,6 @@ uint16_t Write(uint8_t address, uint32_t value)
 {
     uint16_t results = kNOERROR;
  
-
-
     SPI.beginTransaction(SPISettings(1000000, LSBFIRST, SPI_MODE3));
  
     // Combine the register address and the command into one byte
@@ -269,7 +264,6 @@ uint16_t Write(uint8_t address, uint32_t value)
     digitalWrite(Current_CS, HIGH);
  
     SPI.endTransaction();
-
 
     if (address < 0x10)
     {
